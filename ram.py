@@ -34,7 +34,6 @@ glimpses = 7                # number of glimpses
 n_classes = 10              # cardinality(Y)
 
 batch_size = 10
-lr = 1e-3
 max_iters = 1000000
 
 mnist_size = 28             # side length of the picture
@@ -199,8 +198,8 @@ def calc_reward(outputs):
     R = tf.reshape(R, (batch_size, 1))
     print(R)
     # 1 means concatenate along the row direction
-    b_tiled = tf.to_float(b) * tf.ones([batch_size, 1])
-    J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R - b_tiled), -tf.square(R - b_tiled)])
+    b_tiled = tf.to_float(b_placeholder) * tf.ones([batch_size, 1])
+    J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R - b_tiled)])
     print(J)
     # sum the probability of action and location
     J = tf.reduce_sum(J, 1)
@@ -209,13 +208,16 @@ def calc_reward(outputs):
     J = tf.reduce_mean(J, 0)
     print(J)
     cost = -J
+    cost = cost + tf.square(reward - b)
 
     # Adaptive Moment Estimation
     # estimate the 1st and the 2nd moment of the gradients
+    global_step = tf.Variable(0, trainable=False)
+    lr = tf.train.exponential_decay(1e-3, global_step, 1000, 0.95, staircase=True)
     optimizer = tf.train.AdamOptimizer(lr)
     train_op = optimizer.minimize(cost)
 
-    return cost, reward, max_p_y, correct_y, train_op
+    return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(R - b_tiled)
 
 
 def evaluate():
@@ -244,12 +246,14 @@ with tf.Graph().as_default():
     inputs_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 28 * 28), name="images")
     labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size), name="labels")
     onehot_labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 10), name="oneHotLabels")
+    b_placeholder = tf.placeholder(tf.float32, shape=(), name="b")
+
 
     #
     h_l_out = tf.ones((cell_out_size, 2))
     loc_mean = weight_variable((batch_size, glimpses, 2))
     intrag = weight_variable((g_size, g_size))
-    b = tf.Variable(0)
+    b = tf.Variable(0, dtype=tf.float32)
 
     # query the model ouput
     outputs = model()
@@ -262,7 +266,7 @@ with tf.Graph().as_default():
     glimpse_images = tf.concat(0, glimpse_images)
 
     #
-    cost, reward, predicted_labels, correct_labels, train_op = calc_reward(outputs)
+    cost, reward, predicted_labels, correct_labels, train_op, b, rminusb = calc_reward(outputs)
 
     tf.scalar_summary("reward", reward)
     tf.scalar_summary("cost", cost)
@@ -270,6 +274,7 @@ with tf.Graph().as_default():
     
     sess = tf.Session()
     saver = tf.train.Saver()
+    b_fetched = 0
     
     # ckpt = tf.train.get_checkpoint_state(save_dir)
     # if load_path is not None and ckpt and ckpt.model_checkpoint_path:
@@ -302,12 +307,12 @@ with tf.Graph().as_default():
 
             # get the next batch of examples
             nextX, nextY = dataset.train.next_batch(batch_size)
-            feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, onehot_labels_placeholder: dense_to_one_hot(nextY)}
-            fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images]
+            feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
+            fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, rminusb]
             # feed them to the model
             results = sess.run(fetches, feed_dict=feed_dict)
             _, cost_fetched, reward_fetched, prediction_labels_fetched,\
-                correct_labels_fetched, f_glimpse_images_fetched = results
+                correct_labels_fetched, f_glimpse_images_fetched, b_fetched, rminusb_fetched = results
             
             duration = time.time() - start_time
             
@@ -363,7 +368,7 @@ with tf.Graph().as_default():
                         
                 ################################
                 
-                print('Step %d: cost = %.5f reward = %.5f (%.3f sec)' % (step, cost_fetched, reward_fetched, duration))
+                print('Step %d: cost = %.5f reward = %.5f (%.3f sec) b = %.5f R-b = %.5f' % (step, cost_fetched, reward_fetched, duration, b_fetched, rminusb_fetched))
                 
                 summary_str = sess.run(summary_op, feed_dict=feed_dict)
                 summary_writer.add_summary(summary_str, step)
