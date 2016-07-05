@@ -117,9 +117,9 @@ def get_glimpse(loc):
     # the hidden units that integrates the location & the glimpses
     hg_g = weight_variable((hg_size, g_size))
     hl_g = weight_variable((hl_size, g_size))
-    g = tf.nn.relu(tf.matmul(hg, hg_g) + tf.matmul(hl, hl_g))   # TODO linear layer in Mnih et al. (2014)!
+    g = tf.nn.relu(tf.matmul(hg, hg_g) + tf.matmul(hl, hl_g) )   # TODO linear layer in Mnih et al. (2014)!
     g2 = tf.matmul(g, intrag)
-    return g
+    return g2
 
 
 def get_next_input(output, i):
@@ -174,10 +174,18 @@ def gaussian_pdf(mean, sample):
 
 
 def calc_reward(outputs):
-    # conside the action at the last time step
+    
+    outputs_tensor = tf.convert_to_tensor(outputs)
+    outputs_tensor = tf.transpose(outputs_tensor, perm=[1, 0, 2])
+    b_weights_batch = tf.tile(b_weights, [10, 1, 1])
+    b = tf.sigmoid(tf.batch_matmul(outputs_tensor, b_weights_batch))
+    b = tf.concat(2, [b, b])
+    b = tf.reshape(b, (batch_size, glimpses * 2))
+    print(b.get_shape())
+    # consider the action at the last time step
     outputs = outputs[-1] # look at ONLY THE END of the sequence
     outputs = tf.reshape(outputs, (batch_size, cell_out_size))
-    b = tf.sigmoid(tf.matmul(outputs, b_weights))
+    
     # the hidden layer for the action network
     h_a_out = weight_variable((cell_out_size, n_classes))
     # process its output
@@ -192,10 +200,12 @@ def calc_reward(outputs):
 
     #
     p_loc = gaussian_pdf(mean_locs, sampled_locs)
+    p_loc_orig = p_loc
     p_loc = tf.reshape(p_loc, (batch_size, glimpses * 2))
 
     print(R)
     R = tf.reshape(R, (batch_size, 1))
+    R = tf.tile(R, [1, glimpses*2])
     print(R)
     # 1 means concatenate along the row direction
     J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R - b_placeholder)])
@@ -216,7 +226,7 @@ def calc_reward(outputs):
     optimizer = tf.train.AdamOptimizer(lr)
     train_op = optimizer.minimize(cost)
 
-    return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b)
+    return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b), p_loc_orig, p_loc
 
 
 def evaluate():
@@ -245,15 +255,23 @@ with tf.Graph().as_default():
     inputs_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 28 * 28), name="images")
     labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size), name="labels")
     onehot_labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 10), name="oneHotLabels")
-    b_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 1), name="b")
+    b_placeholder = tf.placeholder(tf.float32, shape=(batch_size, glimpses*2), name="b")
 
 
     #
     h_l_out = tf.ones((cell_out_size, 2))
     loc_mean = weight_variable((batch_size, glimpses, 2))
     intrag = weight_variable((g_size, g_size))
-    b_weights = weight_variable((g_size, 1))
-
+    b_weights = weight_variable((1, g_size, 1))
+    '''
+    bias_1 = weight_variable(())
+    bias_2 = weight_variable(())
+    bias_3 = weight_variable(())
+    bias_4 = weight_variable(())
+    bias_5 = weight_variable(())
+    bias_6 = weight_variable(())
+    bias_7 = weight_variable(())
+'''
     # query the model ouput
     outputs = model()
     
@@ -265,7 +283,7 @@ with tf.Graph().as_default():
     glimpse_images = tf.concat(0, glimpse_images)
 
     #
-    cost, reward, predicted_labels, correct_labels, train_op, b, avg_b, rminusb = calc_reward(outputs)
+    cost, reward, predicted_labels, correct_labels, train_op, b, avg_b, rminusb, p_loc_orig, p_loc = calc_reward(outputs)
 
     tf.scalar_summary("reward", reward)
     tf.scalar_summary("cost", cost)
@@ -273,7 +291,7 @@ with tf.Graph().as_default():
     
     sess = tf.Session()
     saver = tf.train.Saver()
-    b_fetched = np.zeros((batch_size, 1))
+    b_fetched = np.zeros((batch_size, glimpses*2))
     
     # ckpt = tf.train.get_checkpoint_state(save_dir)
     # if load_path is not None and ckpt and ckpt.model_checkpoint_path:
@@ -307,11 +325,11 @@ with tf.Graph().as_default():
             # get the next batch of examples
             nextX, nextY = dataset.train.next_batch(batch_size)
             feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
-            fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb]
+            fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb, p_loc_orig, p_loc]
             # feed them to the model
             results = sess.run(fetches, feed_dict=feed_dict)
             _, cost_fetched, reward_fetched, prediction_labels_fetched,\
-                correct_labels_fetched, f_glimpse_images_fetched, b_fetched, avg_b_fetched, rminusb_fetched = results
+                correct_labels_fetched, f_glimpse_images_fetched, b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched = results
             
             duration = time.time() - start_time
             
@@ -368,7 +386,14 @@ with tf.Graph().as_default():
                 ################################
                 
                 print('Step %d: cost = %.5f reward = %.5f (%.3f sec) b = %.5f R-b = %.5f' % (step, cost_fetched, reward_fetched, duration, avg_b_fetched, rminusb_fetched))
-                
+                '''
+                print('real b: ' )
+                print(b_fetched)
+                print('p_loc orig: ')
+                print(p_loc_orig_fetched)
+                print('p_loc: ')
+                print(p_loc_fetched)
+                '''
                 summary_str = sess.run(summary_op, feed_dict=feed_dict)
                 summary_writer.add_summary(summary_str, step)
             
