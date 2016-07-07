@@ -5,6 +5,10 @@ import numpy as np
 import time
 import math
 import random
+try:
+    xrange
+except NameError:
+    xrange = range
 
 dataset = tf_mnist_loader.read_data_sets("mnist_data")
 save_dir = "save-3scales/"
