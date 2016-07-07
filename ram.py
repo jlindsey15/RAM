@@ -212,7 +212,7 @@ def calc_reward(outputs):
     print(J)
     # sum the probability of action and location
     J = tf.reduce_sum(J, 1)
-    J = J - tf.reduce_sum(tf.square(R - b))
+    J = J - tf.reduce_sum(tf.square(R - b), 1)
     print(J)
     # average over batch
     J = tf.reduce_mean(J, 0)
