@@ -41,6 +41,7 @@ mnist_size = 28             # side length of the picture
 
 loc_sd = 0.11                # std when setting the location
 mean_locs = []              #
+baselines = []              #
 sampled_locs = []           # ~N(mean_locs[.], loc_sd)
 glimpse_images = []         # to show in window
 
@@ -122,6 +123,8 @@ def get_glimpse(loc):
 
 def get_next_input(output, i):
     # the next location is computed by the location network
+    baseline = tf.sigmoid(tf.matmul(output,b_weights))
+    baselines.append(baseline)
     
     mean_loc = tf.tanh(tf.matmul(output, h_l_out))
     mean_locs.append(tf.matmul(output, h_l_out))
@@ -176,8 +179,7 @@ def calc_reward(outputs):
     
     outputs_tensor = tf.convert_to_tensor(outputs)
     outputs_tensor = tf.transpose(outputs_tensor, perm=[1, 0, 2])
-    b_weights_batch = tf.tile(b_weights, [10, 1, 1])
-    b = tf.sigmoid(tf.batch_matmul(outputs_tensor, b_weights_batch))
+    b = tf.pack(baselines)
     b = tf.concat(2, [b, b])
     b = tf.reshape(b, (batch_size, glimpses * 2))
     print(b.get_shape())
