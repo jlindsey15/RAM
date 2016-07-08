@@ -5,6 +5,7 @@ import numpy as np
 import time
 import math
 import random
+import sys
 try:
     xrange
 except NameError:
@@ -13,7 +14,7 @@ except NameError:
 dataset = tf_mnist_loader.read_data_sets("mnist_data")
 save_dir = "save-3scales/"
 save_prefix = "save"
-start_step = 10000
+start_step = 0
 #load_path = None
 load_path = save_dir + save_prefix + str(start_step) + ".ckpt"
 # to enable visualization, set draw to True
@@ -24,7 +25,7 @@ draw = True
 # model parameters
 minRadius = 4               # zooms -> minRadius * 2**<depth_level>
 sensorBandwidth = 8         # fixed resolution of sensor
-depth = 1                  # number of zooms
+depth = 3                  # number of zooms
 channels = 1                # mnist are grayscale images
 totalSensorBandwidth = depth * channels * (sensorBandwidth **2)
 
@@ -56,7 +57,7 @@ def weight_variable(shape, myname, train):
 
 # get local glimpses
 def glimpseSensor(img, normLoc):
-    loc = ((normLoc + 1) / 2) * mnist_size # normLoc coordinates are between -1 and 1
+    loc = tf.round(((normLoc + 1) / 2) * mnist_size)  # normLoc coordinates are between -1 and 1
     loc = tf.cast(loc, tf.int32)
 
     img = tf.reshape(img, (batch_size, mnist_size, mnist_size, channels))
@@ -90,8 +91,6 @@ def glimpseSensor(img, normLoc):
                 one_img.get_shape()[1].value))
                 
             # crop image to (d x d)
-
-            print(d_raw)
             zoom = tf.slice(one_img2, adjusted_loc, d)
             
             # resize cropped image to (sensorBandwidth x sensorBandwidth)
@@ -120,7 +119,7 @@ def get_glimpse(loc):
 
     # the hidden units that integrates the location & the glimpses
 
-    g = tf.nn.relu(tf.matmul(hg, hg_g) + tf.matmul(hl, hl_g) )   # TODO linear layer in Mnih et al. (2014)!
+    g = tf.nn.relu(tf.matmul(hg, hg_g) + tf.matmul(hl, hl_g) )
     g2 = tf.matmul(g, intrag)
     return g2
 
@@ -131,7 +130,8 @@ def get_next_input(output, i):
     baselines.append(baseline)
     
     mean_loc = tf.tanh(tf.matmul(output, h_l_out))
-    mean_locs.append(tf.matmul(output, h_l_out))
+    # mean_locs.append(tf.matmul(output, h_l_out))
+    mean_locs.append(mean_loc)
     
     sample_loc = tf.tanh(mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd))
     sampled_locs.append(sample_loc)
@@ -186,7 +186,6 @@ def calc_reward(outputs):
     b = tf.pack(baselines)
     b = tf.concat(2, [b, b])
     b = tf.reshape(b, (batch_size, glimpses * 2))
-    print(b.get_shape())
     # consider the action at the last time step
     outputs = outputs[-1] # look at ONLY THE END of the sequence
     outputs = tf.reshape(outputs, (batch_size, cell_out_size))
@@ -208,21 +207,16 @@ def calc_reward(outputs):
     p_loc_orig = p_loc
     p_loc = tf.reshape(p_loc, (batch_size, glimpses * 2))
 
-    print(R)
     R = tf.reshape(R, (batch_size, 1))
     R = tf.tile(R, [1, glimpses*2])
-    print(R)
     # 1 means concatenate along the row direction
     no_grad_b = tf.stop_gradient(b)
     J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R - no_grad_b)])
-    print(J)
     # sum the probability of action and location
     J = tf.reduce_sum(J, 1)
     J = J - tf.reduce_sum(tf.square(R - b), 1)
-    print(J)
     # average over batch
     J = tf.reduce_mean(J, 0)
-    print(J)
     cost = -J
     
 
@@ -233,7 +227,8 @@ def calc_reward(outputs):
     optimizer = tf.train.AdamOptimizer(lr)
     train_op = optimizer.minimize(cost)
 
-    return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b), p_loc_orig, p_loc
+    return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b), \
+           p_loc_orig, p_loc
 
 
 def evaluate():
@@ -267,6 +262,14 @@ def convertTranslated(images):
 
 
 
+def toMnistCoordinates(coordinate_tanh):
+    '''
+    Transform coordinate in [-1,1] to mnist
+    :param coordinate_tanh: vector in [-1,1] x [-1,1]
+    :return: vector in the corresponding mnist coordinate
+    '''
+    return np.round(((coordinate_tanh + 1) / 2.0) * mnist_size)
+
 
 with tf.Graph().as_default():
     # the y vector
@@ -282,10 +285,9 @@ with tf.Graph().as_default():
 
 
     #
-    #h_l_out = weight_variable((cell_out_size, 2))
     loc_mean = weight_variable((batch_size, glimpses, 2), "loc_mean", True)
     intrag = weight_variable((g_size, g_size), "intrag", True)
-    b_weights = weight_variable((1, g_size, 1), "b_weights", True)
+    b_weights = weight_variable((g_size, 1), "b_weights", True)
     hg_g = weight_variable((hg_size, g_size), "hg_g", True)
     hl_g = weight_variable((hl_size, g_size), "hl_g", True)
     h_l_out = weight_variable((cell_out_size, 2), "h_l_out", False)
@@ -315,6 +317,8 @@ with tf.Graph().as_default():
 
     tf.scalar_summary("reward", reward)
     tf.scalar_summary("cost", cost)
+    tf.scalar_summary("avg_b", avg_b)
+    tf.scalar_summary("rminusb", rminusb)
     summary_op = tf.merge_all_summaries()
     
     sess = tf.Session()
@@ -353,18 +357,26 @@ with tf.Graph().as_default():
             # get the next batch of examples
             nextX, nextY = dataset.train.next_batch(batch_size)
             #nextX = convertTranslated(nextX)
-            feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
-            fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb, p_loc_orig, p_loc, mean_locs, h_l_out, outputs[-1]]
+            feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, \
+                         onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
+            fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb, \
+                       p_loc_orig, p_loc, mean_locs, sampled_locs, h_l_out, outputs[-1]]
             # feed them to the model
             results = sess.run(fetches, feed_dict=feed_dict)
-            _, cost_fetched, reward_fetched, prediction_labels_fetched,\
-                correct_labels_fetched, f_glimpse_images_fetched, b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched, mean_locs_fetched, h_l_out_fetched, output_fetched = results
+
+            _, cost_fetched, reward_fetched, prediction_labels_fetched, correct_labels_fetched, f_glimpse_images_fetched, \
+            b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched, mean_locs_fetched, sampled_locs_fetched, \
+            h_l_out_fetched, output_fetched = results
             
             duration = time.time() - start_time
-            
+
+            # print np.shape(mean_locs_fetched[0,:,0])
+            # print mean_locs_fetched[0, :, :]
+            # sys.exit('STOP')
+
             if step % 20 == 0:
                 if step % 1000 == 0:
-                    saver.save(sess, save_dir + save_prefix + str(step) + ".ckpt")
+                    # saver.save(sess, save_dir + save_prefix + str(step) + ".ckpt")
                     if step % 5000 == 0:
                         evaluate()
 
@@ -378,28 +390,44 @@ with tf.Graph().as_default():
                         fillList = False
                         if len(plotImgs) == 0:
                             fillList = True
-                        
-                        # display first in mini-batch
+
+                        # display the first image in the in mini-batch
+                        # display the entire image
+                        nCols = depth+1
+                        whole = plt.subplot2grid((depth, nCols), (0, 1), rowspan=depth, colspan=depth)
+                        whole = plt.imshow(np.reshape(nextX[0, :], [mnist_size, mnist_size]),
+                                           cmap=plt.get_cmap('gray'), interpolation="nearest")
+                        whole.autoscale()
+                        # transform the coordinate to mnist map
+                        # sampled_locs_mnist_fetched = np.round(((sampled_locs_fetched + 1) / 2.0) * mnist_size)
+                        sampled_locs_mnist_fetched = toMnistCoordinates(sampled_locs_fetched)
+                        # visualize the trace of successive glimpses (note that x and y coordinates are "flipped")
+                        plt.plot(sampled_locs_mnist_fetched[0, 1:-1, 1], sampled_locs_mnist_fetched[0, 1:-1, 0], '-o',
+                                 color='lawngreen')
+                        plt.plot(sampled_locs_mnist_fetched[0, -2, 1], sampled_locs_mnist_fetched[0, -2, 0], 'o',
+                             color='red')
+                        fig.canvas.draw()
+
+                        # display the glimpses
                         for y in xrange(glimpses):
                             txt.set_text('FINAL PREDICTION: %i\nTRUTH: %i\nSTEP: %i/%i'
-                                % (prediction_labels_fetched[0], correct_labels_fetched[0], (y + 1), glimpses))
-                            
+                                         % (prediction_labels_fetched[0], correct_labels_fetched[0], (y + 1), glimpses))
+
                             for x in xrange(depth):
-                                plt.subplot(depth, 1, x + 1)
+                                plt.subplot(depth, nCols, 1 + nCols * x)
                                 if fillList:
                                     plotImg = plt.imshow(f_glimpse_images[y, 0, x], cmap=plt.get_cmap('gray'),
                                                          interpolation="nearest")
-                                    plotImg.autoscale()                                
+                                    plotImg.autoscale()
                                     plotImgs.append(plotImg)
                                 else:
                                     plotImgs[x].set_data(f_glimpse_images[y, 0, x])
-                                    plotImgs[x].autoscale()  
-                                    
+                                    plotImgs[x].autoscale()
                             fillList = False
-                            
+
                             fig.canvas.draw()
                             time.sleep(0.1)
-                            plt.pause(0.0001) 
+                            plt.pause(0.0001)
                     else:
                         txt.set_text('PREDICTION: %i\nTRUTH: %i' % (prediction_labels_fetched[0], correct_labels_fetched[0]))  
                         for x in xrange(depth):
