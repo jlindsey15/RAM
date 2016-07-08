@@ -1,4 +1,6 @@
 *.ckpt
 *.SUNet
-
 *.meta
+
+/summary
+/save-3scales
