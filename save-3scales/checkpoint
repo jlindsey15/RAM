@@ -1,6 +1,0 @@
-model_checkpoint_path: "save32000.ckpt"
-all_model_checkpoint_paths: "save28000.ckpt"
-all_model_checkpoint_paths: "save29000.ckpt"
-all_model_checkpoint_paths: "save30000.ckpt"
-all_model_checkpoint_paths: "save31000.ckpt"
-all_model_checkpoint_paths: "save32000.ckpt"
