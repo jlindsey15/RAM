@@ -1,2 +1,4 @@
 *.ckpt
 *.SUNet
+
+*.meta
