@@ -36,7 +36,7 @@ g_size = 256                #
 cell_size = 256             #
 cell_out_size = cell_size   #
 
-glimpses = 7                # number of glimpses
+n_glimpses = 7                # number of glimpses
 n_classes = 10              # cardinality(Y)
 
 batch_size = 10
@@ -148,11 +148,12 @@ def model():
     #
     # lstm_cell = tf.nn.rnn_cell.LSTMCell(cell_size, g_size, num_proj=cell_out_size)
     lstm_cell = tf.nn.rnn_cell.LSTMCell(cell_size, state_is_tuple = True, num_proj=cell_out_size)
+    # lstm_cell = tf.nn.rnn_cell.RNNCell(cell_size)
     initial_state = lstm_cell.zero_state(batch_size, tf.float32)
 
     #
     inputs = [initial_glimpse]
-    inputs.extend([0] * (glimpses - 1))
+    inputs.extend([0] * (n_glimpses - 1))
 
     #
     outputs, _ = tf.nn.seq2seq.rnn_decoder(inputs, initial_state, lstm_cell, loop_function=get_next_input)
@@ -185,7 +186,7 @@ def calc_reward(outputs):
     outputs_tensor = tf.transpose(outputs_tensor, perm=[1, 0, 2])
     b = tf.pack(baselines)
     b = tf.concat(2, [b, b])
-    b = tf.reshape(b, (batch_size, glimpses * 2))
+    b = tf.reshape(b, (batch_size, n_glimpses * 2))
     # consider the action at the last time step
     outputs = outputs[-1] # look at ONLY THE END of the sequence
     outputs = tf.reshape(outputs, (batch_size, cell_out_size))
@@ -205,13 +206,14 @@ def calc_reward(outputs):
     #
     p_loc = gaussian_pdf(mean_locs, sampled_locs)
     p_loc_orig = p_loc
-    p_loc = tf.reshape(p_loc, (batch_size, glimpses * 2))
+    p_loc = tf.reshape(p_loc, (batch_size, n_glimpses * 2))
 
     R = tf.reshape(R, (batch_size, 1))
-    R = tf.tile(R, [1, glimpses*2])
+    R = tf.tile(R, [1, n_glimpses*2])
     # 1 means concatenate along the row direction
     no_grad_b = tf.stop_gradient(b)
     J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R - no_grad_b)])
+    # J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R)])
     # sum the probability of action and location
     J = tf.reduce_sum(J, 1)
     J = J - tf.reduce_sum(tf.square(R - b), 1)
@@ -278,14 +280,14 @@ with tf.Graph().as_default():
     inputs_placeholder = tf.placeholder(tf.float32, shape=(batch_size, mnist_size * mnist_size), name="images")
     labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size), name="labels")
     onehot_labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 10), name="oneHotLabels")
-    b_placeholder = tf.placeholder(tf.float32, shape=(batch_size, glimpses*2), name="b")
+    b_placeholder = tf.placeholder(tf.float32, shape=(batch_size, n_glimpses*2), name="b")
     
     l_hl = weight_variable((2, hl_size), "l_hl", True)
     glimpse_hg = weight_variable((totalSensorBandwidth, hg_size), "glimpse_hg", True)
 
 
     #
-    loc_mean = weight_variable((batch_size, glimpses, 2), "loc_mean", True)
+    loc_mean = weight_variable((batch_size, n_glimpses, 2), "loc_mean", True)
     intrag = weight_variable((g_size, g_size), "intrag", True)
     b_weights = weight_variable((g_size, 1), "b_weights", True)
     hg_g = weight_variable((hg_size, g_size), "hg_g", True)
@@ -305,16 +307,16 @@ with tf.Graph().as_default():
     
     # convert list of tensors to one big tensor
     sampled_locs = tf.concat(0, sampled_locs)
-    sampled_locs = tf.reshape(sampled_locs, (glimpses, batch_size, 2))
+    sampled_locs = tf.reshape(sampled_locs, (n_glimpses, batch_size, 2))
     sampled_locs = tf.transpose(sampled_locs, [1, 0, 2])
     mean_locs = tf.concat(0, mean_locs)
-    mean_locs = tf.reshape(mean_locs, (glimpses, batch_size, 2))
+    mean_locs = tf.reshape(mean_locs, (n_glimpses, batch_size, 2))
     mean_locs = tf.transpose(mean_locs, [1, 0, 2])
     glimpse_images = tf.concat(0, glimpse_images)
 
-    #
     cost, reward, predicted_labels, correct_labels, train_op, b, avg_b, rminusb, p_loc_orig, p_loc = calc_reward(outputs)
 
+    # record performance metrics for the tensorBoard visualization
     tf.scalar_summary("reward", reward)
     tf.scalar_summary("cost", cost)
     tf.scalar_summary("avg_b", avg_b)
@@ -323,7 +325,7 @@ with tf.Graph().as_default():
     
     sess = tf.Session()
     saver = tf.train.Saver()
-    b_fetched = np.zeros((batch_size, glimpses*2))
+    b_fetched = np.zeros((batch_size, n_glimpses*2))
     
     # ckpt = tf.train.get_checkpoint_state(save_dir)
     # if load_path is not None and ckpt and ckpt.model_checkpoint_path:
@@ -383,7 +385,7 @@ with tf.Graph().as_default():
     
                 ##### DRAW WINDOW ################
     
-                f_glimpse_images = np.reshape(f_glimpse_images_fetched, (glimpses + 1, batch_size, depth, sensorBandwidth, sensorBandwidth)) #steps, THEN batch
+                f_glimpse_images = np.reshape(f_glimpse_images_fetched, (n_glimpses + 1, batch_size, depth, sensorBandwidth, sensorBandwidth)) #steps, THEN batch
                 
                 if draw:
                     if animate:
@@ -409,9 +411,9 @@ with tf.Graph().as_default():
                         fig.canvas.draw()
 
                         # display the glimpses
-                        for y in xrange(glimpses):
+                        for y in xrange(n_glimpses):
                             txt.set_text('FINAL PREDICTION: %i\nTRUTH: %i\nSTEP: %i/%i'
-                                         % (prediction_labels_fetched[0], correct_labels_fetched[0], (y + 1), glimpses))
+                                         % (prediction_labels_fetched[0], correct_labels_fetched[0], (y + 1), n_glimpses))
 
                             for x in xrange(depth):
                                 plt.subplot(depth, nCols, 1 + nCols * x)
@@ -431,8 +433,8 @@ with tf.Graph().as_default():
                     else:
                         txt.set_text('PREDICTION: %i\nTRUTH: %i' % (prediction_labels_fetched[0], correct_labels_fetched[0]))  
                         for x in xrange(depth):
-                            for y in xrange(glimpses):
-                                plt.subplot(depth, glimpses, x * glimpses + y + 1)
+                            for y in xrange(n_glimpses):
+                                plt.subplot(depth, n_glimpses, x * n_glimpses + y + 1)
                                 plt.imshow(f_glimpse_images[y, 0, x], cmap=plt.get_cmap('gray'),
                                            interpolation="nearest")
                         
