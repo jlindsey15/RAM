@@ -19,8 +19,8 @@ start_step = 0
 load_path = save_dir + save_prefix + str(start_step) + ".ckpt"
 # to enable visualization, set draw to True
 eval_only = False
-animate = True
-draw = True
+animate = False
+draw = False
 
 # model parameters
 minRadius = 4               # zooms -> minRadius * 2**<depth_level>
@@ -49,6 +49,7 @@ mean_locs = []              #
 baselines = []              #
 sampled_locs = []           # ~N(mean_locs[.], loc_sd)
 glimpse_images = []         # to show in window
+
 
 # set the weights to be small random values, with truncated normal distribution
 def weight_variable(shape, myname, train):
@@ -133,6 +134,7 @@ def get_next_input(output, i):
     mean_locs.append(mean_loc)
     
     sample_loc = tf.tanh(mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd))
+    #sample_loc = tf.zeros(mean_loc.get_shape())
     sampled_locs.append(sample_loc)
     
     return get_glimpse(sample_loc)
@@ -207,14 +209,20 @@ def calc_reward(outputs):
     p_loc = tf.reshape(p_loc, (batch_size, (glimpses-1) * 2))
 
     R = tf.reshape(R, (batch_size, 1))
+    #R = tf.random_uniform(R.get_shape(), minval=0, maxval=1)
+    #R = 2 * tf.cast(tf.greater(R, 0.45), tf.float32) - 1
+    last_reward = R[batch_size - 1, 0]
     R = tf.tile(R, [1, (glimpses-1)*2])
     # 1 means concatenate along the row direction
     no_grad_b = tf.stop_gradient(b)
-    J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R - no_grad_b)])
+   
+   
+    J = tf.concat(1, [tf.log(p_y + 1e-8) * onehot_labels_placeholder, tf.log(p_loc + 1e-8) * (R - no_grad_b) ])
     # sum the probability of action and location
     J = tf.reduce_sum(J, 1)
     J = J - tf.reduce_sum(tf.square(R - b), 1)
     # average over batch
+    last_cost = -J[batch_size - 1]
     J = tf.reduce_mean(J, 0)
     cost = -J
     
@@ -227,7 +235,7 @@ def calc_reward(outputs):
     train_op = optimizer.minimize(cost)
 
     return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b), \
-           p_loc_orig, p_loc
+        p_loc_orig, p_loc, tf.gradients(last_cost, mean_locs)[0], last_reward, mean_locs[batch_size - 1, 4, :], sampled_locs[batch_size - 1, 4, :]
 
 
 def evaluate():
@@ -304,15 +312,15 @@ with tf.Graph().as_default():
     
     # convert list of tensors to one big tensor
     sampled_locs = tf.concat(0, sampled_locs)
-    sampled_locs = tf.reshape(sampled_locs, (glimpses - 1, batch_size, 2))
+    sampled_locs = tf.reshape(sampled_locs, (glimpses-1, batch_size, 2))
     sampled_locs = tf.transpose(sampled_locs, [1, 0, 2])
     mean_locs = tf.concat(0, mean_locs)
-    mean_locs = tf.reshape(mean_locs, (glimpses - 1, batch_size, 2))
+    mean_locs = tf.reshape(mean_locs, (glimpses-1, batch_size, 2))
     mean_locs = tf.transpose(mean_locs, [1, 0, 2])
     glimpse_images = tf.concat(0, glimpse_images)
 
     #
-    cost, reward, predicted_labels, correct_labels, train_op, b, avg_b, rminusb, p_loc_orig, p_loc = calc_reward(outputs)
+    cost, reward, predicted_labels, correct_labels, train_op, b, avg_b, rminusb, p_loc_orig, p_loc, gradientsX, last_rewardX, mean_locX, sample_locX = calc_reward(outputs)
 
     tf.scalar_summary("reward", reward)
     tf.scalar_summary("cost", cost)
@@ -359,12 +367,12 @@ with tf.Graph().as_default():
             feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, \
                          onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
             fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb, \
-                       p_loc_orig, p_loc, mean_locs, sampled_locs, h_l_out, outputs[-1]]
+                       p_loc_orig, p_loc, gradientsX, last_rewardX, mean_locX, sample_locX, mean_locs, sampled_locs, h_l_out, outputs[-1]]
             # feed them to the model
             results = sess.run(fetches, feed_dict=feed_dict)
 
             _, cost_fetched, reward_fetched, prediction_labels_fetched, correct_labels_fetched, f_glimpse_images_fetched, \
-            b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched, mean_locs_fetched, sampled_locs_fetched, \
+            b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched, gradients_fetched, last_reward_fetched, mean_loc_fetched, sampled_loc_fetched, mean_locs_fetched, sampled_locs_fetched, \
             h_l_out_fetched, output_fetched = results
             
             duration = time.time() - start_time
@@ -442,6 +450,17 @@ with tf.Graph().as_default():
                 ################################
                 
                 print('Step %d: cost = %.5f reward = %.5f (%.3f sec) b = %.5f R-b = %.5f' % (step, cost_fetched, reward_fetched, duration, avg_b_fetched, rminusb_fetched))
+                
+                print('Last reward: ')
+                print(last_reward_fetched)
+                print('Mean Loc:')
+                print(mean_loc_fetched)
+                print('Sampled Loc:')
+                print(sampled_loc_fetched)
+                print('gradients:')
+                print(gradients_fetched)
+                
+
 
                 '''
                 print('real b: ' )
