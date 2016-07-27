@@ -127,10 +127,6 @@ def get_glimpse(loc):
 def get_next_input(output, i):
     # the next location is computed by the location network
     baseline = tf.sigmoid(tf.matmul(output,b_weights) + bias_5)
-
-    # temp = tf.sigmoid(tf.matmul(output,b_weights1) + bias_51)
-    # baseline = tf.matmul(temp, b_weights2) + bias_52
-
     baselines.append(baseline)
 
     mean_loc = tf.tanh(tf.matmul(output, h_l_out) + bias_6)
@@ -142,21 +138,44 @@ def get_next_input(output, i):
     return get_glimpse(sample_loc)
 
 
+# def model():
+#     # initialize the location under unif[-1,1], for all example in the batch
+#     initial_loc = tf.random_uniform((batch_size, 2), minval=-1, maxval=1)
+#     # get the glimpse using the glimpse network
+#     initial_glimpse = get_glimpse(initial_loc)
+#
+#     rnn_cell = tf.nn.rnn_cell.BasicRNNCell(cell_size)
+#     initial_state = rnn_cell.zero_state(batch_size, tf.float32)
+#
+#     inputs = [initial_glimpse]
+#     inputs.extend([0] * (glimpses - 1))
+#
+#     get_next_input(initial_glimpse,0)
+#     outputs, _ = tf.nn.seq2seq.rnn_decoder(inputs, initial_state, rnn_cell, loop_function=get_next_input)
+#
+#     return outputs
+
+
 def model():
     # initialize the location under unif[-1,1], for all example in the batch
     initial_loc = tf.random_uniform((batch_size, 2), minval=-1, maxval=1)
+    # save the initial locations
+    mean_locs.append(initial_loc)
+    initial_loc = tf.tanh(initial_loc + tf.random_normal(initial_loc.get_shape(), 0, loc_sd))
+    sampled_locs.append(initial_loc)
     # get the glimpse using the glimpse network
     initial_glimpse = get_glimpse(initial_loc)
-
+    # set up RNN structure
     rnn_cell = tf.nn.rnn_cell.BasicRNNCell(cell_size)
     initial_state = rnn_cell.zero_state(batch_size, tf.float32)
-
+    # preallocate for the inputs
     inputs = [initial_glimpse]
     inputs.extend([0] * (glimpses - 1))
-
-    get_next_input(initial_glimpse,0)
+    # run RNN
     outputs, _ = tf.nn.seq2seq.rnn_decoder(inputs, initial_state, rnn_cell, loop_function=get_next_input)
-
+    # we care about the last baseline prediction, but not the last location
+    baseline = tf.sigmoid(tf.matmul(outputs[-1], b_weights) + bias_5)
+    baselines.append(baseline)
     return outputs
 
 
@@ -219,7 +238,8 @@ def calc_reward(outputs):
     J = tf.reduce_mean(J, 0)
     cost = -J
 
-    optimizer = tf.train.MomentumOptimizer(lr, .9)
+    # optimizer = tf.train.MomentumOptimizer(lr, .9)
+    optimizer = tf.train.AdamOptimizer(lr)
     train_op = optimizer.minimize(cost, global_step)
 
     return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b), \
@@ -268,7 +288,7 @@ def toMnistCoordinates(coordinate_tanh):
 
 with tf.Graph().as_default():
     global_step = tf.Variable(0, trainable=False)
-    lr = tf.train.exponential_decay(3e-3, global_step, 100, .99, staircase=True)
+    lr = tf.train.exponential_decay(2e-3, global_step, 200, .99, staircase=True)
 
     # the y vector
     labels = tf.placeholder("float32", shape=[batch_size, n_classes])
@@ -290,8 +310,6 @@ with tf.Graph().as_default():
     hl_g = weight_variable((hl_size, g_size), "hl_g", True)
     h_l_out = weight_variable((cell_out_size, 2), "h_l_out", True)
     b_weights = weight_variable((g_size, 1), "b_weights", True)
-    # b_weights1 = weight_variable((g_size, 56), "b_weights1", True)
-    # b_weights2 = weight_variable((56, 1), "b_weights2", True)
 
     bias_1 = weight_variable((hg_size,), "bias_1", True)
     bias_2 = weight_variable((hl_size,),  "bias_2", True)
@@ -373,10 +391,6 @@ with tf.Graph().as_default():
 
             duration = time.time() - start_time
 
-            # print np.shape(mean_locs_fetched[0,:,0])
-            # print mean_locs_fetched[0, :, :]
-            # sys.exit('STOP')
-
             if step % 20 == 0:
                 if step % 1000 == 0:
                     # saver.save(sess, save_dir + save_prefix + str(step) + ".ckpt")
@@ -386,7 +400,7 @@ with tf.Graph().as_default():
 
                 ##### DRAW WINDOW ################
 
-                f_glimpse_images = np.reshape(f_glimpse_images_fetched, (glimpses+1, batch_size, depth, sensorBandwidth, sensorBandwidth)) #steps, THEN batch
+                f_glimpse_images = np.reshape(f_glimpse_images_fetched, (glimpses, batch_size, depth, sensorBandwidth, sensorBandwidth)) #steps, THEN batch
 
                 if draw:
                     if animate:
@@ -405,9 +419,9 @@ with tf.Graph().as_default():
                         # sampled_locs_mnist_fetched = np.round(((sampled_locs_fetched + 1) / 2.0) * mnist_size)
                         sampled_locs_mnist_fetched = toMnistCoordinates(sampled_locs_fetched)
                         # visualize the trace of successive glimpses (note that x and y coordinates are "flipped")
-                        plt.plot(sampled_locs_mnist_fetched[0, 0:-1, 1], sampled_locs_mnist_fetched[0, 0:-1, 0], '-o',
+                        plt.plot(sampled_locs_mnist_fetched[0, :, 1], sampled_locs_mnist_fetched[0, :, 0], '-o',
                                  color='lawngreen')
-                        plt.plot(sampled_locs_mnist_fetched[0, -2, 1], sampled_locs_mnist_fetched[0, -2, 0], 'o',
+                        plt.plot(sampled_locs_mnist_fetched[0, -1, 1], sampled_locs_mnist_fetched[0, -1, 0], 'o',
                              color='red')
                         fig.canvas.draw()
 
