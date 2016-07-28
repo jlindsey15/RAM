@@ -52,6 +52,10 @@ glimpse_images = []         # to show in window
 
 SMALL_NUM = 1e-9
 
+initLr = 5e-3
+lrDecayRate = .995
+lrDecayFreq = 200
+
 # set the weights to be small random values, with truncated normal distribution
 def weight_variable(shape, myname, train):
     initial = tf.random_uniform(shape, minval=-0.1, maxval = 0.1)
@@ -238,8 +242,8 @@ def calc_reward(outputs):
     J = tf.reduce_mean(J, 0)
     cost = -J
 
-    # optimizer = tf.train.MomentumOptimizer(lr, .9)
-    optimizer = tf.train.AdamOptimizer(lr)
+    optimizer = tf.train.MomentumOptimizer(lr, .9)
+    # optimizer = tf.train.AdamOptimizer(lr)
     train_op = optimizer.minimize(cost, global_step)
 
     return cost, reward, max_p_y, correct_y, train_op, b, tf.reduce_mean(b), tf.reduce_mean(R - b), \
@@ -288,7 +292,7 @@ def toMnistCoordinates(coordinate_tanh):
 
 with tf.Graph().as_default():
     global_step = tf.Variable(0, trainable=False)
-    lr = tf.train.exponential_decay(2e-3, global_step, 200, .99, staircase=True)
+    lr = tf.train.exponential_decay(initLr, global_step, lrDecayFreq, lrDecayRate, staircase=True)
 
     # the y vector
     labels = tf.placeholder("float32", shape=[batch_size, n_classes])
