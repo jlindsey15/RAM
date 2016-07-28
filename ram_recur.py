@@ -198,12 +198,22 @@ def model():
     inputs = [0] * nGlimpses
     outputs = [0] * nGlimpses
     glimpse = initial_glimpse
+    # hiddenState_prev = tf.zeros((cell_size,cell_size))
     REUSE = None
     for t in range(nGlimpses):
 
+        if t == 0:
+            hiddenState_prev = tf.zeros((batch_size, cell_size))
+        else:
+            hiddenState_prev = outputs[t-1]
+
+        # print tf.matmul(glimpse, wts_g_h) + bias_g_h
+        # print affineTransform(hiddenState_prev, cell_size)
+        # sys.exit('STOP')
+
         # forward prop
         with tf.variable_scope("coreNetwork", reuse=REUSE):
-            hiddenState = affineTransform(glimpse, cell_size)
+            hiddenState = tf.nn.relu(affineTransform(hiddenState_prev, cell_size) + (tf.matmul(glimpse, wts_g_h) + bias_g_h))
 
         inputs[t] = glimpse
         outputs[t] = hiddenState
@@ -355,8 +365,9 @@ with tf.Graph().as_default():
     hl_g = weight_variable((hl_size, g_size), "hl_g", True)
     h_l_out = weight_variable((cell_out_size, 2), "h_l_out", True)
     b_weights = weight_variable((g_size, 1), "b_weights", True)
-    # b_weights1 = weight_variable((g_size, 56), "b_weights1", True)
-    # b_weights2 = weight_variable((56, 1), "b_weights2", True)
+
+    wts_g_h = weight_variable((cell_size, g_size), "wts_glimpse_hidden", True)
+    bias_g_h = weight_variable((g_size,), "bias_glimpse_hidden", True)
 
     bias_1 = weight_variable((hg_size,), "bias_1", True)
     bias_2 = weight_variable((hl_size,),  "bias_2", True)
