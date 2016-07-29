@@ -18,8 +18,8 @@ start_step = 0
 load_path = save_dir + save_prefix + str(start_step) + ".ckpt"
 # to enable visualization, set draw to True
 eval_only = False
-animate = 1
-draw = 1
+animate = 0
+draw = 0
 
 # model parameters
 minRadius = 4               # zooms -> minRadius * 2**<depth_level>
@@ -42,18 +42,22 @@ n_classes = 10              # card(Y)
 
 MNIST_SIZE = 28
 translated_img_size = 60             # side length of the picture
-translateMnist = 0
+translateMnist = 1
 
 # training parameters
 max_iters = 1000000
 batch_size = 20
 SMALL_NUM = 1e-9
 
-initLr = 3e-3
-lrDecayRate = .99
-lrDecayFreq = 100
-momentumValue = .9
+# initLr = 3e-3
+# lrDecayRate = .99
+# lrDecayFreq = 100
+# momentumValue = .9
 
+initLr = 1e-2
+lrDecayRate = .995
+lrDecayFreq = 200
+momentumValue = .9
 
 # resource prellocation
 mean_locs = []              # expectation of locations
@@ -263,7 +267,7 @@ def evaluate():
     for i in xrange(batches_in_epoch):
         nextX, nextY = dataset.test.next_batch(batch_size)
         if translateMnist:
-            nextX = convertTranslated(nextX)
+            nextX, _ = convertTranslated(nextX, MNIST_SIZE, img_size)
         feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY,
                      onehot_labels_placeholder: dense_to_one_hot(nextY)}
         r = sess.run(reward, feed_dict=feed_dict)
@@ -273,17 +277,24 @@ def evaluate():
     print("ACCURACY: " + str(accuracy))
 
 
-def convertTranslated(images, imgSize):
-    newimages = []
+def convertTranslated(images, initImgSize, finalImgSize):
+    # imgList = []
+    size_diff = finalImgSize - initImgSize
+    newimages = np.zeros([batch_size, finalImgSize*finalImgSize])
+    imgCoord = np.zeros([batch_size,2])
     for k in xrange(batch_size):
         image = images[k, :]
-        image = np.reshape(image, (28, 28))
-        randX = random.randint(0, 32)
-        randY = random.randint(0, 32)
-        image = np.lib.pad(image, ((randX, 32 - randX), (randY, 32 - randY)), 'constant', constant_values = (0))
-        image = np.reshape(image, (60*60))
-        newimages.append(image)
-    return newimages
+        image = np.reshape(image, (initImgSize, initImgSize))
+        # generate and save random coordinates
+        randX = random.randint(0, size_diff)
+        randY = random.randint(0, size_diff)
+        imgCoord[k,:] = np.array([randX, randY])
+        # padding
+        image = np.lib.pad(image, ((randX, size_diff - randX), (randY, size_diff - randY)), 'constant', constant_values = (0))
+        newimages[k, :] = np.reshape(image, (finalImgSize*finalImgSize))
+        # imgList.append(newimages)
+
+    return newimages, imgCoord
 
 
 
@@ -426,7 +437,8 @@ with tf.Graph().as_default():
             # get the next batch of examples
             nextX, nextY = dataset.train.next_batch(batch_size)
             if translateMnist:
-                nextX = convertTranslated(nextX, img_size)
+                nextX, nextX_coord = convertTranslated(nextX, MNIST_SIZE, img_size)
+
             feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, \
                          onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
             fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb, \
@@ -438,9 +450,19 @@ with tf.Graph().as_default():
             b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched, mean_locs_fetched, sampled_locs_fetched, \
             output_fetched, lr_fetched = results
 
+
+            # compute the distance (glimpsedLocation, targetCenter) over glimpses (for all images in the batch)
+            # distance = np.zeros(nGlimpses, batch_size)
+            # for k in range(batch_size):
+            #     img_coord_cur = np.reshape(nextX_coord[k,:], [1,2])
+            #     sampled_locs_cur = np.reshape(sampled_locs_fetched[k,:,:], [nGlimpses,2])
+            #     distance[:,k] = np.sqrt(np.sum(np.square(np.subtract(sampled_locs_cur, img_coord_cur)), axis=0))
+
+
+            # sys.exit('STOP')
+
+
             duration = time.time() - start_time
-
-
             if step % 20 == 0:
                 if step % 1000 == 0:
                     # saver.save(sess, save_dir + save_prefix + str(step) + ".ckpt")
@@ -461,16 +483,10 @@ with tf.Graph().as_default():
                         # display the entire image
                         nCols = depth+1
                         whole = plt.subplot2grid((depth, nCols), (0, 1), rowspan=depth, colspan=depth)
-
-                        if translateMnist:
-                            thisImage = nextX[0]
-                        else:
-                            thisImage = nextX[0, :]
-
-                        whole = plt.imshow(np.reshape(thisImage, [img_size, img_size]),
+                        whole = plt.imshow(np.reshape(nextX[0, :], [img_size, img_size]),
                                            cmap=plt.get_cmap('gray'), interpolation="nearest")
-                        plt.xlim(0, img_size)
-                        plt.ylim(0, img_size)
+                        plt.xlim(0, img_size-1)
+                        plt.ylim(0, img_size-1)
                         whole.autoscale()
 
                         # transform the coordinate to mnist map
