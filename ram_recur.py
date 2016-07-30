@@ -39,18 +39,25 @@ cell_out_size = cell_size   #
 
 # paramters about the training examples
 n_classes = 10              # card(Y)
-mnist_size = 28             # side length of the picture
+
+MNIST_SIZE = 28
+translated_img_size = 60             # side length of the picture
+translateMnist = 1
 
 # training parameters
 max_iters = 1000000
 batch_size = 20
 SMALL_NUM = 1e-9
 
-initLr = 3e-3
-lrDecayRate = .99
-lrDecayFreq = 100
-momentumValue = .9
+# initLr = 3e-3
+# lrDecayRate = .99
+# lrDecayFreq = 100
+# momentumValue = .9
 
+initLr = 1e-2
+lrDecayRate = .995
+lrDecayFreq = 200
+momentumValue = .9
 
 # resource prellocation
 mean_locs = []              # expectation of locations
@@ -58,7 +65,10 @@ sampled_locs = []           # sampled locations ~N(mean_locs[.], loc_sd)
 baselines = []              # baseline, the value prediction
 glimpse_images = []         # to show in window
 
-
+if translateMnist:
+    img_size = translated_img_size
+else:
+    img_size = MNIST_SIZE
 
 # set the weights to be small random values, with truncated normal distribution
 def weight_variable(shape, myname, train):
@@ -67,10 +77,10 @@ def weight_variable(shape, myname, train):
 
 # get local glimpses
 def glimpseSensor(img, normLoc):
-    loc = tf.round(((normLoc + 1) / 2) * mnist_size)  # normLoc coordinates are between -1 and 1
+    loc = tf.round(((normLoc + 1) / 2) * img_size)  # normLoc coordinates are between -1 and 1
     loc = tf.cast(loc, tf.int32)
 
-    img = tf.reshape(img, (batch_size, mnist_size, mnist_size, channels))
+    img = tf.reshape(img, (batch_size, img_size, img_size, channels))
 
     # process each image individually
     zooms = []
@@ -82,7 +92,7 @@ def glimpseSensor(img, normLoc):
 
         # pad image with zeros
         one_img = tf.image.pad_to_bounding_box(one_img, offset, offset, \
-                                               max_radius * 4 + mnist_size, max_radius * 4 + mnist_size)
+                                               max_radius * 4 + img_size, max_radius * 4 + img_size)
 
         for i in xrange(depth):
             r = int(minRadius * (2 ** (i)))
@@ -193,7 +203,7 @@ def dense_to_one_hot(labels_dense, num_classes=10):
     """Convert class labels from scalars to one-hot vectors."""
     # copied from TensorFlow tutorial
     num_labels = labels_dense.shape[0]
-    index_offset = np.arange(num_labels) * n_classes
+    index_offset = np.arange(num_labels) * num_classes
     labels_one_hot = np.zeros((num_labels, num_classes))
     labels_one_hot.flat[index_offset + labels_dense.ravel()] = 1
     return labels_one_hot
@@ -256,7 +266,8 @@ def evaluate():
 
     for i in xrange(batches_in_epoch):
         nextX, nextY = dataset.test.next_batch(batch_size)
-        # nextX = convertTranslated(nextX)
+        if translateMnist:
+            nextX, _ = convertTranslated(nextX, MNIST_SIZE, img_size)
         feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY,
                      onehot_labels_placeholder: dense_to_one_hot(nextY)}
         r = sess.run(reward, feed_dict=feed_dict)
@@ -266,17 +277,24 @@ def evaluate():
     print("ACCURACY: " + str(accuracy))
 
 
-def convertTranslated(images):
-    newimages = []
+def convertTranslated(images, initImgSize, finalImgSize):
+    # imgList = []
+    size_diff = finalImgSize - initImgSize
+    newimages = np.zeros([batch_size, finalImgSize*finalImgSize])
+    imgCoord = np.zeros([batch_size,2])
     for k in xrange(batch_size):
         image = images[k, :]
-        image = np.reshape(image, (28, 28))
-        randX = random.randint(0, 32)
-        randY = random.randint(0, 32)
-        image = np.lib.pad(image, ((randX, 32 - randX), (randY, 32 - randY)), 'constant', constant_values = (0))
-        image = np.reshape(image, (60*60))
-        newimages.append(image)
-    return newimages
+        image = np.reshape(image, (initImgSize, initImgSize))
+        # generate and save random coordinates
+        randX = random.randint(0, size_diff)
+        randY = random.randint(0, size_diff)
+        imgCoord[k,:] = np.array([randX, randY])
+        # padding
+        image = np.lib.pad(image, ((randX, size_diff - randX), (randY, size_diff - randY)), 'constant', constant_values = (0))
+        newimages[k, :] = np.reshape(image, (finalImgSize*finalImgSize))
+        # imgList.append(newimages)
+
+    return newimages, imgCoord
 
 
 
@@ -286,7 +304,7 @@ def toMnistCoordinates(coordinate_tanh):
     :param coordinate_tanh: vector in [-1,1] x [-1,1]
     :return: vector in the corresponding mnist coordinate
     '''
-    return np.round(((coordinate_tanh + 1) / 2.0) * mnist_size)
+    return np.round(((coordinate_tanh + 1) / 2.0) * img_size)
 
 
 def variable_summaries(var, name):
@@ -312,7 +330,7 @@ with tf.Graph().as_default():
     labels = tf.placeholder("float32", shape=[batch_size, n_classes])
     labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size), name="labels_raw")
     onehot_labels_placeholder = tf.placeholder(tf.float32, shape=(batch_size, 10), name="labels_onehot")
-    inputs_placeholder = tf.placeholder(tf.float32, shape=(batch_size, mnist_size * mnist_size), name="images")
+    inputs_placeholder = tf.placeholder(tf.float32, shape=(batch_size, img_size * img_size), name="images")
     b_placeholder = tf.placeholder(tf.float32, shape=(batch_size, (nGlimpses)*2), name="baseline")
 
     # declare the model parameters, here're naming rule:
@@ -325,11 +343,11 @@ with tf.Graph().as_default():
 
     Wg_g_h = weight_variable((totalSensorBandwidth, hg_size), "glimpseNet_wts_glimpse_hidden", True)
     Bg_g_h = weight_variable((hg_size,), "glimpseNet_bias_glimpse_hidden", True)
-    
+
     Wg_hg_gf1 = weight_variable((hg_size, g_size), "glimpseNet_wts_hiddenGlimpse_glimpseFeature1", True)
     Wg_hl_gf1 = weight_variable((hl_size, g_size), "glimpseNet_wts_hiddenLocation_glimpseFeature1", True)
     Bg_hlhg_gf1 = weight_variable((g_size,), "glimpseNet_bias_hGlimpse_hLocs_glimpseFeature1", True)
-    
+
     Wg_gf1_gf2 = weight_variable((g_size, g_size), "glimpseNet_wts_glimpseFeature1_glimpsedFeature2", True)
     Bg_gf1_gf2 = weight_variable((g_size,), "glimpseNet_bias_hidden_glimpsedFeature2", True)
 
@@ -418,7 +436,9 @@ with tf.Graph().as_default():
 
             # get the next batch of examples
             nextX, nextY = dataset.train.next_batch(batch_size)
-            # nextX = convertTranslated(nextX)
+            if translateMnist:
+                nextX, nextX_coord = convertTranslated(nextX, MNIST_SIZE, img_size)
+
             feed_dict = {inputs_placeholder: nextX, labels_placeholder: nextY, \
                          onehot_labels_placeholder: dense_to_one_hot(nextY), b_placeholder: b_fetched}
             fetches = [train_op, cost, reward, predicted_labels, correct_labels, glimpse_images, b, avg_b, rminusb, \
@@ -430,9 +450,19 @@ with tf.Graph().as_default():
             b_fetched, avg_b_fetched, rminusb_fetched, p_loc_orig_fetched, p_loc_fetched, mean_locs_fetched, sampled_locs_fetched, \
             output_fetched, lr_fetched = results
 
+
+            # compute the distance (glimpsedLocation, targetCenter) over glimpses (for all images in the batch)
+            # distance = np.zeros(nGlimpses, batch_size)
+            # for k in range(batch_size):
+            #     img_coord_cur = np.reshape(nextX_coord[k,:], [1,2])
+            #     sampled_locs_cur = np.reshape(sampled_locs_fetched[k,:,:], [nGlimpses,2])
+            #     distance[:,k] = np.sqrt(np.sum(np.square(np.subtract(sampled_locs_cur, img_coord_cur)), axis=0))
+
+
+            # sys.exit('STOP')
+
+
             duration = time.time() - start_time
-
-
             if step % 20 == 0:
                 if step % 1000 == 0:
                     # saver.save(sess, save_dir + save_prefix + str(step) + ".ckpt")
@@ -453,8 +483,10 @@ with tf.Graph().as_default():
                         # display the entire image
                         nCols = depth+1
                         whole = plt.subplot2grid((depth, nCols), (0, 1), rowspan=depth, colspan=depth)
-                        whole = plt.imshow(np.reshape(nextX[0, :], [mnist_size, mnist_size]),
+                        whole = plt.imshow(np.reshape(nextX[0, :], [img_size, img_size]),
                                            cmap=plt.get_cmap('gray'), interpolation="nearest")
+                        plt.xlim(0, img_size-1)
+                        plt.ylim(0, img_size-1)
                         whole.autoscale()
 
                         # transform the coordinate to mnist map
