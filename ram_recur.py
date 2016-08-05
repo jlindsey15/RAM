@@ -22,30 +22,39 @@ animate = 0
 draw = 0
 
 # conditions
-translateMnist = 1
-eyeCentered = 0
+translateMnist = 0
+eyeCentered = 1
 
 # about translation
 MNIST_SIZE = 28
 translated_img_size = 60             # side length of the picture
+
 if translateMnist:
     img_size = translated_img_size
-    sensorBandwidth = 12  # fixed resolution of sensor
-    initLr = 3e-3
-    lrDecayRate = .99
-    lrDecayFreq = 100
+    depth = 3  # number of zooms
+    sensorBandwidth = 12
+    minRadius = 6  # zooms -> minRadius * 2**<depth_level>
+
+    initLr = 5e-3
+    lrDecayRate = .995
+    lrDecayFreq = 500
     momentumValue = .9
+    batch_size = 20
+
 else:
     img_size = MNIST_SIZE
-    sensorBandwidth = 8  # fixed resolution of sensor
+    depth = 1  # number of zooms
+    sensorBandwidth = 8
+    minRadius = 4  # zooms -> minRadius * 2**<depth_level>
+
     initLr = 3e-3
     lrDecayRate = .995
     lrDecayFreq = 200
     momentumValue = .9
+    batch_size = 20
+
 
 # model parameters
-minRadius = 6               # zooms -> minRadius * 2**<depth_level>
-depth = 3                 # number of zooms
 channels = 1                # mnist are grayscale images
 totalSensorBandwidth = depth * channels * (sensorBandwidth **2)
 nGlimpses = 6               # number of glimpses
@@ -61,10 +70,8 @@ cell_out_size = cell_size   #
 # paramters about the training examples
 n_classes = 10              # card(Y)
 
-
 # training parameters
 max_iters = 1000000
-batch_size = 20
 SMALL_NUM = 1e-9
 
 # resource prellocation
@@ -148,18 +155,24 @@ def get_next_input(output):
     # compute the next location, then impose noise
     if eyeCentered:
         # add the last sampled glimpse location
-        # TODO take out this tanh
         # TODO max(-1, min(1, u + N(output, sigma) + prevLoc))
         mean_loc = tf.tanh(tf.matmul(output, Wl_h_l) + Bl_h_l + sampled_locs[-1])
-        # mean_loc = tf.tanh(tf.matmul(output, Wl_h_l) + sampled_locs[-1])
     else:
-        mean_loc = tf.tanh(tf.matmul(output, Wl_h_l) + Bl_h_l)
-        # mean_loc = tf.tanh(tf.matmul(output, Wl_h_l))
+        # mean_loc = tf.matmul(output, Wl_h_l) + Bl_h_l
+        mean_loc = tf.matmul(output, Wl_h_l)
 
+    mean_loc = tf.stop_gradient(mean_loc)
     mean_locs.append(mean_loc)
 
-    sample_loc = tf.stop_gradient(tf.tanh(mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd)))
+    # add noise
+    # sample_loc = tf.tanh(mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd))
+    sample_loc = tf.maximum(-1.0,tf.minimum(1.0, mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd)))
+
+    # don't propagate throught the locations
+    sample_loc = tf.stop_gradient(sample_loc)
     sampled_locs.append(sample_loc)
+
+
     return get_glimpse(sample_loc)
 
 
