@@ -21,13 +21,43 @@ eval_only = False
 animate = 0
 draw = 0
 
+# conditions
+translateMnist = 0
+eyeCentered = 1
+
+# about translation
+MNIST_SIZE = 28
+translated_img_size = 60             # side length of the picture
+
+if translateMnist:
+    img_size = translated_img_size
+    depth = 3  # number of zooms
+    sensorBandwidth = 12
+    minRadius = 6  # zooms -> minRadius * 2**<depth_level>
+
+    initLr = 5e-3
+    lrDecayRate = .995
+    lrDecayFreq = 500
+    momentumValue = .9
+    batch_size = 20
+
+else:
+    img_size = MNIST_SIZE
+    depth = 1  # number of zooms
+    sensorBandwidth = 8
+    minRadius = 4  # zooms -> minRadius * 2**<depth_level>
+
+    initLr = 3e-3
+    lrDecayRate = .995
+    lrDecayFreq = 200
+    momentumValue = .9
+    batch_size = 20
+
+
 # model parameters
-minRadius = 4               # zooms -> minRadius * 2**<depth_level>
-sensorBandwidth = 8         # fixed resolution of sensor
-depth = 3                 # number of zooms
 channels = 1                # mnist are grayscale images
 totalSensorBandwidth = depth * channels * (sensorBandwidth **2)
-nGlimpses = 5               # number of glimpses
+nGlimpses = 6               # number of glimpses
 loc_sd = 0.11               # std when setting the location
 
 # network units
@@ -40,24 +70,9 @@ cell_out_size = cell_size   #
 # paramters about the training examples
 n_classes = 10              # card(Y)
 
-MNIST_SIZE = 28
-translated_img_size = 60             # side length of the picture
-translateMnist = 1
-
 # training parameters
 max_iters = 1000000
-batch_size = 20
 SMALL_NUM = 1e-9
-
-# initLr = 3e-3
-# lrDecayRate = .99
-# lrDecayFreq = 100
-# momentumValue = .9
-
-initLr = 1e-2
-lrDecayRate = .995
-lrDecayFreq = 200
-momentumValue = .9
 
 # resource prellocation
 mean_locs = []              # expectation of locations
@@ -65,10 +80,6 @@ sampled_locs = []           # sampled locations ~N(mean_locs[.], loc_sd)
 baselines = []              # baseline, the value prediction
 glimpse_images = []         # to show in window
 
-if translateMnist:
-    img_size = translated_img_size
-else:
-    img_size = MNIST_SIZE
 
 # set the weights to be small random values, with truncated normal distribution
 def weight_variable(shape, myname, train):
@@ -77,7 +88,7 @@ def weight_variable(shape, myname, train):
 
 # get local glimpses
 def glimpseSensor(img, normLoc):
-    loc = tf.round(((normLoc + 1) / 2) * img_size)  # normLoc coordinates are between -1 and 1
+    loc = tf.round(((normLoc + 1) / 2.0) * img_size)  # normLoc coordinates are between -1 and 1
     loc = tf.cast(loc, tf.int32)
 
     img = tf.reshape(img, (batch_size, img_size, img_size, channels))
@@ -142,13 +153,27 @@ def get_next_input(output):
     baseline = tf.sigmoid(tf.matmul(output,Wb_h_b) + Bb_h_b)
     baselines.append(baseline)
     # compute the next location, then impose noise
-    mean_loc = tf.tanh(tf.matmul(output, Wl_h_l) + Bl_h_l)
+    if eyeCentered:
+        # add the last sampled glimpse location
+        # TODO max(-1, min(1, u + N(output, sigma) + prevLoc))
+        mean_loc = tf.tanh(tf.matmul(output, Wl_h_l) + Bl_h_l + sampled_locs[-1])
+    else:
+        # mean_loc = tf.matmul(output, Wl_h_l) + Bl_h_l
+        mean_loc = tf.matmul(output, Wl_h_l)
+
+    mean_loc = tf.stop_gradient(mean_loc)
     mean_locs.append(mean_loc)
-    sample_loc = tf.tanh(mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd))
+
+    # add noise
+    # sample_loc = tf.tanh(mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd))
+    sample_loc = tf.maximum(-1.0,tf.minimum(1.0, mean_loc + tf.random_normal(mean_loc.get_shape(), 0, loc_sd)))
+
+    # don't propagate throught the locations
+    sample_loc = tf.stop_gradient(sample_loc)
     sampled_locs.append(sample_loc)
 
-    return get_glimpse(sample_loc)
 
+    return get_glimpse(sample_loc)
 
 
 def affineTransform(x,output_dim):
@@ -159,6 +184,7 @@ def affineTransform(x,output_dim):
     w=tf.get_variable("w", [x.get_shape()[1], output_dim])
     b=tf.get_variable("b", [output_dim], initializer=tf.constant_initializer(0.0))
     return tf.matmul(x,w)+b
+
 
 def model():
     # initialize the location under unif[-1,1], for all example in the batch
@@ -185,6 +211,7 @@ def model():
         with tf.variable_scope("coreNetwork", reuse=REUSE):
             # the next hidden state is a function of the previous hidden state and the current glimpse
             hiddenState = tf.nn.relu(affineTransform(hiddenState_prev, cell_size) + (tf.matmul(glimpse, Wc_g_h) + Bc_g_h))
+
         # save the current glimpse and the hidden state
         inputs[t] = glimpse
         outputs[t] = hiddenState
@@ -278,7 +305,6 @@ def evaluate():
 
 
 def convertTranslated(images, initImgSize, finalImgSize):
-    # imgList = []
     size_diff = finalImgSize - initImgSize
     newimages = np.zeros([batch_size, finalImgSize*finalImgSize])
     imgCoord = np.zeros([batch_size,2])
@@ -292,7 +318,6 @@ def convertTranslated(images, initImgSize, finalImgSize):
         # padding
         image = np.lib.pad(image, ((randX, size_diff - randX), (randY, size_diff - randY)), 'constant', constant_values = (0))
         newimages[k, :] = np.reshape(image, (finalImgSize*finalImgSize))
-        # imgList.append(newimages)
 
     return newimages, imgCoord
 
@@ -339,29 +364,29 @@ with tf.Graph().as_default():
     # the 3rd and 4th letter(s): input-output mapping, which is clearly written in the variable name argument
 
     Wg_l_h = weight_variable((2, hl_size), "glimpseNet_wts_location_hidden", True)
-    Bg_l_h = weight_variable((hl_size,), "glimpseNet_bias_location_hidden", True)
+    Bg_l_h = weight_variable((1,hl_size), "glimpseNet_bias_location_hidden", True)
 
     Wg_g_h = weight_variable((totalSensorBandwidth, hg_size), "glimpseNet_wts_glimpse_hidden", True)
-    Bg_g_h = weight_variable((hg_size,), "glimpseNet_bias_glimpse_hidden", True)
+    Bg_g_h = weight_variable((1,hg_size), "glimpseNet_bias_glimpse_hidden", True)
 
     Wg_hg_gf1 = weight_variable((hg_size, g_size), "glimpseNet_wts_hiddenGlimpse_glimpseFeature1", True)
     Wg_hl_gf1 = weight_variable((hl_size, g_size), "glimpseNet_wts_hiddenLocation_glimpseFeature1", True)
-    Bg_hlhg_gf1 = weight_variable((g_size,), "glimpseNet_bias_hGlimpse_hLocs_glimpseFeature1", True)
+    Bg_hlhg_gf1 = weight_variable((1,g_size), "glimpseNet_bias_hGlimpse_hLocs_glimpseFeature1", True)
 
     Wg_gf1_gf2 = weight_variable((g_size, g_size), "glimpseNet_wts_glimpseFeature1_glimpsedFeature2", True)
-    Bg_gf1_gf2 = weight_variable((g_size,), "glimpseNet_bias_hidden_glimpsedFeature2", True)
+    Bg_gf1_gf2 = weight_variable((1,g_size), "glimpseNet_bias_hidden_glimpsedFeature2", True)
 
     Wc_g_h = weight_variable((cell_size, g_size), "coreNet_wts_glimpse_hidden", True)
-    Bc_g_h = weight_variable((g_size,), "coreNet_bias_glimpse_hidden", True)
+    Bc_g_h = weight_variable((1,g_size), "coreNet_bias_glimpse_hidden", True)
 
     Wb_h_b = weight_variable((g_size, 1), "baselineNet_wts_hiddenState_baseline", True)
-    Bb_h_b = weight_variable((1,), "baselineNet_bias_hiddenState_baseline", True)
+    Bb_h_b = weight_variable((1,1), "baselineNet_bias_hiddenState_baseline", True)
 
     Wl_h_l = weight_variable((cell_out_size, 2), "locationNet_wts_hidden_location", True)
-    Bl_h_l = weight_variable((2,),  "locationNet_bias_hidden_location", True)
+    Bl_h_l = weight_variable((1,2),  "locationNet_bias_hidden_location", True)
 
     Wa_h_a = weight_variable((cell_out_size, n_classes), "actionNet_wts_hidden_action", True)
-    Ba_h_a = weight_variable((n_classes,),  "actionNet_bias_hidden_action", True)
+    Ba_h_a = weight_variable((1,n_classes),  "actionNet_bias_hidden_action", True)
 
     # query the model ouput
     outputs = model()
@@ -485,8 +510,9 @@ with tf.Graph().as_default():
                         whole = plt.subplot2grid((depth, nCols), (0, 1), rowspan=depth, colspan=depth)
                         whole = plt.imshow(np.reshape(nextX[0, :], [img_size, img_size]),
                                            cmap=plt.get_cmap('gray'), interpolation="nearest")
-                        plt.xlim(0, img_size-1)
-                        plt.ylim(0, img_size-1)
+                        # plt.ylim((0, img_size-1))
+                        # plt.xlim((0, img_size-1))
+
                         whole.autoscale()
 
                         # transform the coordinate to mnist map
