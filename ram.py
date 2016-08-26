@@ -182,9 +182,8 @@ def get_next_input(output):
     if eyeCentered:
         # add the last sampled glimpse location
         # TODO max(-1, min(1, u + N(output, sigma) + prevLoc))
-        mean_loc = tf.tanh(tf.matmul(output, Wl_h_l)  + sampled_locs[-1])
+        mean_loc = tf.maximum(-1.0, tf.minimum(1.0, tf.matmul(output, Wl_h_l) + sampled_locs[-1] ))
     else:
-        # mean_loc = tf.matmul(output, Wl_h_l) + Bl_h_l
         mean_loc = tf.matmul(output, Wl_h_l)
 
     mean_loc = tf.stop_gradient(mean_loc)
@@ -502,7 +501,6 @@ with tf.Graph().as_default():
     else:
         summary_writer = tf.train.SummaryWriter(summaryFolderName, graph=sess.graph)
 
-
         if draw:
             fig = plt.figure(1)
             txt = fig.suptitle("-", fontsize=36, fontweight='bold')
@@ -526,15 +524,7 @@ with tf.Graph().as_default():
 
                 fetches_r = [reconstructionCost, reconstruction, train_op_r]
 
-                # print np.shape(nextX_orig)
-                # print np.shape(nextX)
-                # print type(nextX)
-                # sys.exit('STOP')
-
-                reconstructionCost_fetched, reconstruction_fetched, train_op_r_fetched = sess.run(fetches_r,feed_dict={inputs_placeholder: nextX})
-                # reconstructionCost_fetched = sess.run(reconstructionCost, feed_dict={inputs_placeholder: nextX})
-
-
+                reconstructionCost_fetched, reconstruction_fetched, train_op_r_fetched = sess.run(fetches_r, feed_dict={inputs_placeholder: nextX})
 
                 if epoch_r % 20 == 0:
                     print('Step %d: reconstructionCost = %.5f' % (epoch_r, reconstructionCost_fetched))
@@ -590,7 +580,7 @@ with tf.Graph().as_default():
                 # if saveImgs:
                 #     plt.savefig(imgsFolderName + simulationName + '_ep%.6d.png' % (epoch))
 
-                if epoch % 10000 == 0:
+                if epoch % 5000 == 0:
                     saver.save(sess, save_dir + save_prefix + str(epoch) + ".ckpt")
                     evaluate()
 
