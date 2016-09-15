@@ -16,10 +16,10 @@ It should run if the directory structure is correctly specified. For example, th
 
 ## Some results
 
-The `ram.py` implements the RAM. For the 60 X 60 translated MNIST,  it can get to 90% accuracy in 2 hours, with a somewhat arbitary choice of parameters. Here're the reward and cost over time: 
+The `ram.py` implements the RAM. For the 60 X 60 translated MNIST,  it converges at 6% error. Here's a comparison between the model with the value baseline prediction term (purple), and the model without the baseline term (blue). The plot shows the reward and cost over time. In this simulations, both model ends up with a similar error (6%), which is something that still needs to be understood...  
 
-<img src="https://github.com/QihongL/RAM/blob/master/demo/b.vs.nb_trans_abs_rwd.png" width="200">
-<img src="https://github.com/QihongL/RAM/blob/master/demo/b.vs.nb_trans_abs_cost.png" width="200">
+<img src="https://github.com/QihongL/RAM/blob/master/demo/b.vs.nb_trans_abs_rwd.png" width="1000">
+<img src="https://github.com/QihongL/RAM/blob/master/demo/b.vs.nb_trans_abs_cost.png" width="1000">
 
 
 If you find any errors in the code, please let us know. Thanks! 
