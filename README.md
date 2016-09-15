@@ -18,8 +18,8 @@ It should run if the directory structure is correctly specified. For example, th
 
 The `ram.py` implements the RAM. For the 60 X 60 translated MNIST,  it can get to 90% accuracy in 2 hours, with a somewhat arbitary choice of parameters. Here're the reward and cost over time: 
 
-<img src="https://github.com/QihongL/RAM/blob/master/demo/rwd_tMnist.png" width="200">
-<img src="https://github.com/QihongL/RAM/blob/master/demo/cost_tMnist.png" width="200">
+<img src="https://github.com/QihongL/RAM/blob/master/demo/b.vs.nb_trans_abs_rwd" width="200">
+<img src="https://github.com/QihongL/RAM/blob/master/demo/b.vs.nb_trans_abs_cost" width="200">
 
 
 If you find any errors in the code, please let us know. Thanks! 
