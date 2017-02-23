@@ -484,7 +484,7 @@ with tf.Graph().as_default():
     tf.scalar_summary("reward", reward)
     tf.scalar_summary("cost", cost)
     tf.scalar_summary("mean(b)", avg_b)
-    tf.scalar_summary(" mean(R - b)", rminusb)
+    tf.scalar_summary("mean(R - b)", rminusb)
     summary_op = tf.merge_all_summaries()
 
 
