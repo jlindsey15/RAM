@@ -94,9 +94,9 @@ def glimpseSensor(img, normLoc):
             zoom = tf.reshape(zoom, (sensorBandwidth, sensorBandwidth))
             imgZooms.append(zoom)
     
-        zooms.append(tf.pack(imgZooms))
+        zooms.append(tf.stack(imgZooms))
         
-    zooms = tf.pack(zooms)
+    zooms = tf.stack(zooms)
     
     glimpse_images.append(zooms)
     
@@ -179,8 +179,8 @@ def calc_reward(outputs):
     outputs_tensor = tf.convert_to_tensor(outputs)
     outputs_tensor = tf.transpose(outputs_tensor, perm=[1, 0, 2])
     b_weights_batch = tf.tile(b_weights, [10, 1, 1])
-    b = tf.sigmoid(tf.batch_matmul(outputs_tensor, b_weights_batch))
-    b = tf.concat(2, [b, b])
+    b = tf.sigmoid(tf.matmul(outputs_tensor, b_weights_batch))
+    b = tf.concat(axis=2, values=[b, b])
     b = tf.reshape(b, (batch_size, glimpses * 2))
     print(b.get_shape())
     # consider the action at the last time step
@@ -210,7 +210,7 @@ def calc_reward(outputs):
     print(R)
     # 1 means concatenate along the row direction
     no_grad_b = tf.stop_gradient(b)
-    J = tf.concat(1, [tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R)])
+    J = tf.concat(axis=1, values=[tf.log(p_y + 1e-5) * onehot_labels_placeholder, tf.log(p_loc + 1e-5) * (R)])
     print(J)
     # sum the probability of action and location
     J = tf.reduce_sum(J, 1)
@@ -293,20 +293,20 @@ with tf.Graph().as_default():
     outputs = model()
     
     # convert list of tensors to one big tensor
-    sampled_locs = tf.concat(0, sampled_locs)
+    sampled_locs = tf.concat(axis=0, values=sampled_locs)
     sampled_locs = tf.reshape(sampled_locs, (glimpses, batch_size, 2))
     sampled_locs = tf.transpose(sampled_locs, [1, 0, 2])
-    mean_locs = tf.concat(0, mean_locs)
+    mean_locs = tf.concat(axis=0, values=mean_locs)
     mean_locs = tf.reshape(mean_locs, (glimpses, batch_size, 2))
     mean_locs = tf.transpose(mean_locs, [1, 0, 2])
-    glimpse_images = tf.concat(0, glimpse_images)
+    glimpse_images = tf.concat(axis=0, values=glimpse_images)
 
     #
     cost, reward, predicted_labels, correct_labels, train_op, b, avg_b, rminusb, p_loc_orig, p_loc = calc_reward(outputs)
 
-    tf.scalar_summary("reward", reward)
-    tf.scalar_summary("cost", cost)
-    summary_op = tf.merge_all_summaries()
+    tf.summary.scalar("reward", reward)
+    tf.summary.scalar("cost", cost)
+    summary_op = tf.summary.merge_all()
     
     sess = tf.Session()
     saver = tf.train.Saver()
@@ -321,13 +321,13 @@ with tf.Graph().as_default():
     #         print("FAILED TO LOAD CHECKPOINT")
     #         exit()
     # else:
-    init = tf.initialize_all_variables()
+    init = tf.global_variables_initializer()
     sess.run(init)
 
     if eval_only:        
         evaluate()
     else:
-        summary_writer = tf.train.SummaryWriter("summary", graph=sess.graph)
+        summary_writer = tf.summary.FileWriter("summary", graph=sess.graph)
         
         if draw:
             fig = plt.figure()
@@ -354,7 +354,7 @@ with tf.Graph().as_default():
             duration = time.time() - start_time
             
             if step % 20 == 0:
-                print(tf.all_variables())
+                print(tf.global_variables())
                 if step % 1000 == 0:
                     saver.save(sess, save_dir + save_prefix + str(step) + ".ckpt")
                     if step % 5000 == 0:
