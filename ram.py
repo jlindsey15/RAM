@@ -149,9 +149,9 @@ def glimpseSensor(img, normLoc):
             zoom = tf.reshape(zoom, (sensorBandwidth, sensorBandwidth))
             imgZooms.append(zoom)
 
-        zooms.append(tf.pack(imgZooms))
+        zooms.append(tf.stack(imgZooms))
 
-    zooms = tf.pack(zooms)
+    zooms = tf.stack(zooms)
 
     glimpse_images.append(zooms)
 
@@ -274,8 +274,8 @@ def calc_reward(outputs):
     outputs = tf.reshape(outputs, (batch_size, cell_out_size))
 
     # get the baseline
-    b = tf.pack(baselines)
-    b = tf.concat(2, [b, b])
+    b = tf.stack(baselines)
+    b = tf.concat(axis=2, values=[b, b])
     b = tf.reshape(b, (batch_size, (nGlimpses) * 2))
     no_grad_b = tf.stop_gradient(b)
 
@@ -297,7 +297,7 @@ def calc_reward(outputs):
     p_loc = tf.reshape(p_loc, (batch_size, (nGlimpses) * 2))
 
     # define the cost function
-    J = tf.concat(1, [tf.log(p_y + SMALL_NUM) * (onehot_labels_placeholder), tf.log(p_loc + SMALL_NUM) * (R - no_grad_b)])
+    J = tf.concat(axis=1, values=[tf.log(p_y + SMALL_NUM) * (onehot_labels_placeholder), tf.log(p_loc + SMALL_NUM) * (R - no_grad_b)])
     J = tf.reduce_sum(J, 1)
     J = J - tf.reduce_sum(tf.square(R - b), 1)
     J = tf.reduce_mean(J, 0)
@@ -374,13 +374,13 @@ def variable_summaries(var, name):
     """Attach a lot of summaries to a Tensor."""
     with tf.name_scope('param_summaries'):
         mean = tf.reduce_mean(var)
-        tf.scalar_summary('param_mean/' + name, mean)
+        tf.summary.scalar('param_mean/' + name, mean)
         with tf.name_scope('param_stddev'):
             stddev = tf.sqrt(tf.reduce_sum(tf.square(var - mean)))
-        tf.scalar_summary('param_sttdev/' + name, stddev)
-        tf.scalar_summary('param_max/' + name, tf.reduce_max(var))
-        tf.scalar_summary('param_min/' + name, tf.reduce_min(var))
-        tf.histogram_summary(name, var)
+        tf.summary.scalar('param_sttdev/' + name, stddev)
+        tf.summary.scalar('param_max/' + name, tf.reduce_max(var))
+        tf.summary.scalar('param_min/' + name, tf.reduce_min(var))
+        tf.summary.histogram(name, var)
 
 
 def plotWholeImg(img, img_size, sampled_locs_fetched):
@@ -445,13 +445,13 @@ with tf.Graph().as_default():
     outputs = model()
 
     # convert list of tensors to one big tensor
-    sampled_locs = tf.concat(0, sampled_locs)
+    sampled_locs = tf.concat(axis=0, values=sampled_locs)
     sampled_locs = tf.reshape(sampled_locs, (nGlimpses, batch_size, 2))
     sampled_locs = tf.transpose(sampled_locs, [1, 0, 2])
-    mean_locs = tf.concat(0, mean_locs)
+    mean_locs = tf.concat(axis=0, values=mean_locs)
     mean_locs = tf.reshape(mean_locs, (nGlimpses, batch_size, 2))
     mean_locs = tf.transpose(mean_locs, [1, 0, 2])
-    glimpse_images = tf.concat(0, glimpse_images)
+    glimpse_images = tf.concat(axis=0, values=glimpse_images)
 
 
 
@@ -480,12 +480,12 @@ with tf.Graph().as_default():
     variable_summaries(Ba_h_a, 'actionNet_bias_hidden_action')
 
     # tensorboard visualization for the performance metrics
-    tf.scalar_summary("reconstructionCost", reconstructionCost)
-    tf.scalar_summary("reward", reward)
-    tf.scalar_summary("cost", cost)
-    tf.scalar_summary("mean(b)", avg_b)
-    tf.scalar_summary(" mean(R - b)", rminusb)
-    summary_op = tf.merge_all_summaries()
+    tf.summary.scalar("reconstructionCost", reconstructionCost)
+    tf.summary.scalar("reward", reward)
+    tf.summary.scalar("cost", cost)
+    tf.summary.scalar("mean(b)", avg_b)
+    tf.summary.scalar("mean(R - b)", rminusb)
+    summary_op = tf.summary.merge_all()
 
 
     ####################################### START RUNNING THE MODEL #######################################
@@ -493,13 +493,13 @@ with tf.Graph().as_default():
     saver = tf.train.Saver()
     b_fetched = np.zeros((batch_size, (nGlimpses)*2))
 
-    init = tf.initialize_all_variables()
+    init = tf.global_variables_initializer()
     sess.run(init)
 
     if eval_only:
         evaluate()
     else:
-        summary_writer = tf.train.SummaryWriter(summaryFolderName, graph=sess.graph)
+        summary_writer = tf.summary.FileWriter(summaryFolderName, graph=sess.graph)
 
         if draw:
             fig = plt.figure(1)
