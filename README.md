@@ -1,5 +1,6 @@
 # A tensorflow implementation of the recurrent attention model
 
+### Some known issues with this implementation are discussed [here](https://github.com/jlindsey15/RAM/issues/10)
 
 ## Intro to RAM
 
