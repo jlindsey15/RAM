@@ -1,4 +1,4 @@
-This is a reimplementation of the code from jlindsey15's RAM repository. The tensorboard graph in that code was not clear enough and thi sone has been made keeping in mind to make a clear graph. 
+This is a reimplementation of the code from jlindsey15's RAM repository. The tensorboard graph in that code was not clear enough and this sone has been made keeping in mind to make a clear graph. 
 
 
 ## References: 
